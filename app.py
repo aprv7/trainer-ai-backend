@@ -14,13 +14,13 @@ def health_sync():
     incoming = request.get_json(force=True, silent=True)
     if incoming is None:
         return {'error': 'Invalid JSON'}, 400
-    # Expecting a list of dicts
-    if not isinstance(incoming, list):
-        return {'error': 'Expected a list of data points'}, 400
+    # Expecting a dict with 'records' key containing a list
+    if not isinstance(incoming, dict) or 'records' not in incoming or not isinstance(incoming['records'], list):
+        return {'error': "Expected a JSON object with a 'records' key containing a list of data points"}, 400
     with data_lock:
         data_points.clear()
-        data_points.extend(incoming)
-    print('Received data:', incoming)
+        data_points.extend(incoming['records'])
+    print('Received data:', incoming['records'])
     return {'status': 'received'}, 200
 
 @app.route('/metrics')
