@@ -30,6 +30,7 @@ data_lock = threading.Lock()
 
 @app.route('/healthSync', methods=['POST'])
 def health_sync():
+    print(request.data)
     incoming = request.get_json(force=True, silent=True)
     if incoming is None:
         return {'error': 'Invalid JSON'}, 400
