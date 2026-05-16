@@ -1,6 +1,8 @@
 
 
 from flask import Flask, request, Response
+import os
+from dotenv import load_dotenv
  
 import threading
 from influxdb_client_3 import InfluxDBClient3, Point
@@ -8,10 +10,14 @@ from influxdb_client_3 import InfluxDBClient3, Point
 
 app = Flask(__name__)
 
-# InfluxDB 3 client setup (adjust token, org, and database as needed)
-INFLUXDB_URL = "http://localhost:8181"
-INFLUXDB_TOKEN = "apiv3_ieEMp9bHiA3PBykkG0pNCyWzTMquZWO67dfBBtlW4ignNgxQsT9q-s2GuU-8yin34-shSHHzktAojjwpJI25TQ"
-INFLUXDB_DATABASE = "my_health_db"
+# Load environment variables from .env file
+load_dotenv()
+
+# InfluxDB 3 client setup using environment variables
+INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://localhost:8181")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "")
+INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "")
+INFLUXDB_DATABASE = os.getenv("INFLUXDB_DATABASE", "my_health_db")
 influx_client = InfluxDBClient3(
     host=INFLUXDB_URL,
     token=INFLUXDB_TOKEN,
