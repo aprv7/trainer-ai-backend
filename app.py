@@ -44,6 +44,7 @@ def health_sync():
     # Ingest to InfluxDB
     influx_points = []
     for dp in records:
+        print(dp)
         if dp.get('type') == 'HKQuantityTypeIdentifierHeartRate':
             point = Point("heart_rate") \
                 .tag("unit", dp.get("unit", "count/min")) \
