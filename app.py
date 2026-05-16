@@ -42,20 +42,44 @@ def health_sync():
         data_points.extend(records)
 
     # Ingest to InfluxDB
+
     influx_points = []
+    # Heart rate points
     for dp in records:
         print(dp)
         if dp.get('type') == 'HKQuantityTypeIdentifierHeartRate':
             point = Point("heart_rate") \
                 .tag("unit", dp.get("unit", "count/min")) \
                 .field("value", int(float(dp.get("value", 0))))
-            # Use startDate as timestamp if present
             if "startDate" in dp:
                 point = point.time(dp["startDate"])
             influx_points.append(point)
+
+    # Step count aggregation per hour
+    from collections import defaultdict
+    from datetime import datetime
+    import pytz
+
+    step_counts_by_hour = defaultdict(int)
+    for dp in records:
+        if dp.get('type') == 'HKQuantityTypeIdentifierStepCount':
+            # Parse startDate to hour
+            start = dp.get('startDate')
+            if start:
+                # Parse ISO8601 and round to hour
+                dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                dt_hour = dt.replace(minute=0, second=0, microsecond=0)
+                step_counts_by_hour[dt_hour] += int(float(dp.get('value', 0)))
+
+    for hour, total in step_counts_by_hour.items():
+        point = Point("step_count") \
+            .tag("unit", "count") \
+            .field("value", total) \
+            .time(hour.isoformat())
+        influx_points.append(point)
+
     try:
         if influx_points:
-            # Note: In the v3 client, use 'record=' not 'points='
             influx_client.write(record=influx_points)
             print(f"Successfully wrote {len(influx_points)} points to InfluxDB")
     except Exception as e:
