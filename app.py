@@ -40,7 +40,6 @@ def health_sync():
     with data_lock:
         data_points.clear()
         data_points.extend(records)
-    print('Received data:', records)
 
     # Ingest to InfluxDB
     influx_points = []
@@ -53,8 +52,13 @@ def health_sync():
             if "startDate" in dp:
                 point = point.time(dp["startDate"])
             influx_points.append(point)
-    if influx_points:
-        influx_client.write(points=influx_points)
+    try:
+        if influx_points:
+            # Note: In the v3 client, use 'record=' not 'points='
+            influx_client.write(record=influx_points)
+            print(f"Successfully wrote {len(influx_points)} points to InfluxDB")
+    except Exception as e:
+        print(f"FAILED to write to InfluxDB: {e}")
 
     return {'status': 'received'}, 200
 
