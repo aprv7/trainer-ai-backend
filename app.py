@@ -55,26 +55,35 @@ def health_sync():
                 point = point.time(dp["startDate"])
             influx_points.append(point)
 
+
     # Step count aggregation per hour
     from collections import defaultdict
     from datetime import datetime
-    import pytz
 
     step_counts_by_hour = defaultdict(int)
+    energy_by_hour = defaultdict(float)
     for dp in records:
+        start = dp.get('startDate')
+        if not start:
+            continue
+        dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+        dt_hour = dt.replace(minute=0, second=0, microsecond=0)
         if dp.get('type') == 'HKQuantityTypeIdentifierStepCount':
-            # Parse startDate to hour
-            start = dp.get('startDate')
-            if start:
-                # Parse ISO8601 and round to hour
-                dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                dt_hour = dt.replace(minute=0, second=0, microsecond=0)
-                step_counts_by_hour[dt_hour] += int(float(dp.get('value', 0)))
+            step_counts_by_hour[dt_hour] += int(float(dp.get('value', 0)))
+        elif dp.get('type') == 'HKQuantityTypeIdentifierActiveEnergyBurned':
+            energy_by_hour[dt_hour] += float(dp.get('value', 0))
 
     for hour, total in step_counts_by_hour.items():
         point = Point("step_count") \
             .tag("unit", "count") \
             .field("value", total) \
+            .time(hour.isoformat())
+        influx_points.append(point)
+
+    for hour, total in energy_by_hour.items():
+        point = Point("active_energy_burnt") \
+            .tag("unit", "kcal") \
+            .field("value", int(total)) \
             .time(hour.isoformat())
         influx_points.append(point)
 
