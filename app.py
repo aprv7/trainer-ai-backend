@@ -47,7 +47,7 @@ def health_sync():
         if dp.get('type') == 'HKQuantityTypeIdentifierHeartRate':
             point = Point("heart_rate") \
                 .tag("unit", dp.get("unit", "count/min")) \
-                .field("value", dp.get("value", 0))
+                .field("value", int(float(dp.get("value", 0))))
             # Use startDate as timestamp if present
             if "startDate" in dp:
                 point = point.time(dp["startDate"])
