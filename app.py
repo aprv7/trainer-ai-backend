@@ -30,14 +30,14 @@ data_lock = threading.Lock()
 
 @app.route('/healthSync', methods=['POST'])
 def health_sync():
-    # print(request.data)
     incoming = request.get_json(force=True, silent=True)
     if incoming is None:
         return {'error': 'Invalid JSON'}, 400
     # Expecting a dict with 'samples' key containing a list
-    if not isinstance(incoming, dict) or 'samples' not in incoming or not isinstance(incoming['samples'], list):
+    if not isinstance(incoming, dict) or 'samples' not in incoming or 'workouts' not in incoming or not isinstance(incoming['samples'], list) or not isinstance(incoming['workouts'], list):
         return {'error': "Expected a JSON object with a 'samples' key containing a list of data points"}, 400
     samples = incoming['samples']
+    workouts = incoming['workouts']
     with data_lock:
         data_points.clear()
         data_points.extend(samples)
@@ -46,8 +46,10 @@ def health_sync():
 
     influx_points = []
     # Heart rate points
-    for dp in samples:
+    for dp in workouts:
         print(dp)
+    for dp in samples:
+        # print(dp)
         if dp.get('type') == 'HKQuantityTypeIdentifierHeartRate':
             point = Point("heart_rate") \
                 .tag("unit", dp.get("unit", "count/min")) \
