@@ -271,7 +271,7 @@ def get_dashboard():
 
         # --- Heart Rate Zones (aggregate all splits HR by duration) ---
         cur.execute("""
-            SELECT avg_heart_rate, duration_seconds FROM workout_splits ws
+            SELECT ws.avg_heart_rate, ws.duration_seconds FROM workout_splits ws
             JOIN workouts w ON ws.workout_id = w.id
             WHERE w.start_date >= %s
         """, (week_ago,))
