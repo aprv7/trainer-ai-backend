@@ -144,6 +144,173 @@ def health_sync():
 
     return {'status': 'received'}, 200
 
+
+# --- DASHBOARD ENDPOINT AND HELPERS ---
+from flask import jsonify
+from datetime import timedelta
+
+def get_activity_type_map(cur):
+    cur.execute("SELECT id, name FROM workout_activity_types")
+    return {row[0]: row[1] for row in cur.fetchall()}
+
+def get_heart_rate_zones(hr):
+    zones = [
+        {"zone": "Z1 Recovery", "min": 0, "max": 120, "color": "#6ee7b7"},
+        {"zone": "Z2 Aerobic", "min": 121, "max": 140, "color": "#34d399"},
+        {"zone": "Z3 Tempo", "min": 141, "max": 160, "color": "#fbbf24"},
+        {"zone": "Z4 Threshold", "min": 161, "max": 180, "color": "#fb923c"},
+        {"zone": "Z5 VO2max", "min": 181, "max": 300, "color": "#f87171"},
+    ]
+    zone_minutes = {z["zone"]: 0 for z in zones}
+    for hr_val, duration in hr:
+        for z in zones:
+            if z["min"] <= hr_val <= z["max"]:
+                zone_minutes[z["zone"]] += duration
+                break
+    return [
+        {"zone": z["zone"], "minutes": int(zone_minutes[z["zone"]]), "color": z["color"]}
+        for z in zones
+    ]
+
+@app.route('/dashboard', methods=['GET'])
+def get_dashboard():
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        activity_type_map = get_activity_type_map(cur)
+
+        # --- Recent Workouts (last 7 days, sorted desc) ---
+        cur.execute("""
+            SELECT id, activity_type, duration_seconds, calories_burned, distance_meters, start_date, end_date
+            FROM workouts
+            WHERE start_date >= %s
+            ORDER BY start_date DESC
+        """, (week_ago,))
+        workouts = cur.fetchall()
+
+        # --- Weekly Summary ---
+        total_distance = 0
+        total_calories = 0
+        workout_count = len(workouts)
+        paces = []
+        avg_hrs = []
+        longest_run = 0
+        workout_objs = []
+        all_dates = set()
+
+        for w in workouts:
+            wid, atype, dur, cal, dist, sdate, edate = w
+            all_dates.add(sdate.date())
+            # Get stats for this workout
+            cur.execute("SELECT stat_type, stat_average, stat_sum, stat_min, stat_max, unit FROM workout_stats WHERE workout_id=%s", (wid,))
+            stats = {row[0]: row for row in cur.fetchall()}
+            # Get splits
+            cur.execute("SELECT split_number, duration_seconds, avg_heart_rate, avg_pace_seconds_per_km FROM workout_splits WHERE workout_id=%s ORDER BY split_number", (wid,))
+            splits = cur.fetchall()
+            # --- Build splits for API ---
+            split_objs = []
+            for s in splits:
+                snum, sdur, shr, space = s
+                split_obj = {"km": snum}
+                if space is not None:
+                    split_obj["paceMinPerKm"] = round(space/60, 2)
+                if shr is not None:
+                    split_obj["heartRate"] = round(shr)
+                if sdur is not None:
+                    split_obj["durationMin"] = round(sdur/60, 2)
+                split_objs.append(split_obj)
+
+            # --- Build workout object ---
+            workout_obj = {
+                "id": f"w-{wid}",
+                "date": sdate.date().isoformat(),
+                "title": activity_type_map.get(atype, "Workout"),
+                "type": activity_type_map.get(atype, "Workout").lower(),
+                "distanceKm": round(dist/1000, 2) if dist else 0,
+                "durationMin": round(dur/60, 2) if dur else 0,
+                "avgHeartRate": round(float(stats.get("HKQuantityTypeIdentifierHeartRate", [None, None, 0])[2] or 0)),
+                "maxHeartRate": round(float(stats.get("HKQuantityTypeIdentifierHeartRate", [None, None, None, None, stats.get("HKQuantityTypeIdentifierHeartRate", [None]*5)[4]])[4] or 0)),
+                "calories": round(cal or 0),
+                "splits": split_objs
+            }
+            workout_objs.append(workout_obj)
+
+            # --- Weekly summary aggregation ---
+            if activity_type_map.get(atype, "").lower() == "running":
+                total_distance += dist or 0
+                if dist and dist > longest_run:
+                    longest_run = dist
+            total_calories += cal or 0
+            # Pace (min/km)
+            if dist and dist > 0 and dur and activity_type_map.get(atype, "").lower() == "running":
+                pace = (dur/60) / (dist/1000)
+                paces.append(pace)
+            # Avg HR
+            if "HKQuantityTypeIdentifierHeartRate" in stats and stats["HKQuantityTypeIdentifierHeartRate"][2]:
+                avg_hrs.append(float(stats["HKQuantityTypeIdentifierHeartRate"][2]))
+
+        # --- Daily Metrics (distance, calories, avgHR per day) ---
+        daily_metrics = []
+        for i in range(7):
+            day = (week_ago + timedelta(days=i)).date()
+            cur.execute("""
+                SELECT SUM(distance_meters), SUM(calories_burned), AVG(ws.stat_average)
+                FROM workouts w
+                LEFT JOIN workout_stats ws ON w.id = ws.workout_id AND ws.stat_type = 'HKQuantityTypeIdentifierHeartRate'
+                WHERE w.start_date >= %s AND w.start_date < %s AND w.start_date::date = %s
+            """, (week_ago, now, day))
+            dist, cal, avghr = cur.fetchone()
+            daily_metrics.append({
+                "date": day.isoformat(),
+                "distanceKm": round((dist or 0)/1000, 2),
+                "calories": round(cal or 0),
+                "avgHeartRate": round(avghr or 0) if avghr else 0
+            })
+
+        # --- Heart Rate Zones (aggregate all splits HR by duration) ---
+        cur.execute("""
+            SELECT avg_heart_rate, duration_seconds FROM workout_splits ws
+            JOIN workouts w ON ws.workout_id = w.id
+            WHERE w.start_date >= %s
+        """, (week_ago,))
+        hr_zone_data = [(float(hr or 0), float(dur or 0)/60) for hr, dur in cur.fetchall() if hr and dur]
+        heart_rate_zones = get_heart_rate_zones(hr_zone_data)
+
+        # --- Weekly Summary ---
+        weekly_summary = {
+            "totalDistanceKm": round(total_distance/1000, 2),
+            "totalCalories": round(total_calories),
+            "workoutCount": workout_count,
+            "avgPaceMinPerKm": round(sum(paces)/len(paces), 2) if paces else 0,
+            "avgHeartRate": round(sum(avg_hrs)/len(avg_hrs)) if avg_hrs else 0,
+            "longestRunKm": round(longest_run/1000, 2) if longest_run else 0
+        }
+
+        # --- Workout Plan (stub, as not enough info) ---
+        workout_plan = {
+            "weekOf": week_ago.date().isoformat(),
+            "summary": "Build aerobic base with one quality session.",
+            "rationale": f"Last week was {weekly_summary['totalDistanceKm']} km with elevated tempo HR…",
+            "sessions": []
+        }
+
+        response = {
+            "lastUpdated": now.replace(microsecond=0).isoformat() + "Z",
+            "weeklySummary": weekly_summary,
+            "dailyMetrics": daily_metrics,
+            "recentWorkouts": workout_objs,
+            "heartRateZones": heart_rate_zones,
+            "workoutPlan": workout_plan
+        }
+        cur.close()
+        conn.close()
+        return jsonify(response)
+    except Exception as e:
+        print(f"/dashboard error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5050, debug=True)
 
